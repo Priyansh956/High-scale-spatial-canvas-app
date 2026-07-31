@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../services/api_service.dart';
 import '../models/spatial_object.dart';
+import '../canvas/canvas_painter.dart';
 
 class CanvasScreen extends StatefulWidget {
   const CanvasScreen({super.key});
@@ -23,9 +24,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
   Future<void> _checkBackendThenFetch() async {
     final isHealthy = await ApiService.checkHealth();
     if (!isHealthy) {
-      setState(() {
-        _status = 'Could not reach backend';
-      });
+      setState(() => _status = '❌ Could not reach backend');
       return;
     }
 
@@ -57,37 +56,19 @@ class _CanvasScreenState extends State<CanvasScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Visualli Canvas')),
-      body: Column(
-        children: [
-          Padding(
-            padding: const EdgeInsets.all(16),
-            child: Text(_status, style: const TextStyle(fontSize: 16)),
-          ),
-          if (_loading) const CircularProgressIndicator(),
-          Expanded(
-            child: ListView.builder(
-              itemCount: _objects.length,
-              itemBuilder: (context, index) {
-                final obj = _objects[index];
-                return ListTile(
-                  dense: true,
-                  leading: Container(
-                    width: 16,
-                    height: 16,
-                    decoration: BoxDecoration(
-                      color: Color(int.parse(obj.color.replaceFirst('#', '0xFF'))),
-                      shape: BoxShape.circle,
-                    ),
-                  ),
-                  title: Text('(${obj.x.toStringAsFixed(1)}, ${obj.y.toStringAsFixed(1)})'),
-                  subtitle: Text('${obj.shape} · size ${obj.size}'),
-                );
-              },
+      appBar: AppBar(title: Text(_status, style: const TextStyle(fontSize: 14))),
+      body: _loading
+          ? const Center(child: CircularProgressIndicator())
+          : RepaintBoundary(
+              child: CustomPaint(
+                painter: CanvasPainter(
+                  objects: _objects,
+                  panOffset: Offset.zero, // hardcoded for now — Module 8 makes this live
+                  scale: 0.3,             // fit a 1000-radius viewport into a typical screen
+                ),
+                size: Size.infinite,
+              ),
             ),
-          ),
-        ],
-      ),
     );
   }
 }
