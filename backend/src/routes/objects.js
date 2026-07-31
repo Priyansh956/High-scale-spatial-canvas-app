@@ -1,7 +1,8 @@
 const express = require('express');
 const router = express.Router();
-const { getObjectsInViewport } = require('../controllers/objectsController');
+const { getObjectsInViewport, updateObjectPosition } = require('../controllers/objectsController');
 
 router.get('/', getObjectsInViewport);
+router.patch('/:id', updateObjectPosition);
 
 module.exports = router;

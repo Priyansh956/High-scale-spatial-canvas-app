@@ -1,5 +1,8 @@
 const SpatialObject = require('../models/SpatialObject');
+const mongoose = require('mongoose');
 
+const COORD_MIN = -10000;
+const COORD_MAX = 10000;
 const MAX_RESULTS = 2000; // safety cap regardless of viewport size
 
 async function getObjectsInViewport(req, res) {
@@ -49,4 +52,45 @@ async function getObjectsInViewport(req, res) {
   }
 }
 
-module.exports = { getObjectsInViewport };
+async function updateObjectPosition(req, res) {
+  const { id } = req.params;
+  const { x, y } = req.body;
+
+  if (!mongoose.Types.ObjectId.isValid(id)) {
+    return res.status(400).json({ error: 'Invalid object id' });
+  }
+
+  if (
+    x === undefined || y === undefined ||
+    Number.isNaN(Number(x)) || Number.isNaN(Number(y))
+  ) {
+    return res.status(400).json({ error: 'x and y must be numbers' });
+  }
+
+  const newX = Number(x);
+  const newY = Number(y);
+
+  if (newX < COORD_MIN || newX > COORD_MAX || newY < COORD_MIN || newY > COORD_MAX) {
+    return res.status(400).json({ error: `Coordinates must be within [${COORD_MIN}, ${COORD_MAX}]` });
+  }
+
+  try {
+    const updated = await SpatialObject.findByIdAndUpdate(
+      id,
+      { loc: [newX, newY] },
+      { new: true } // return the document AFTER the update, not before
+    ).lean();
+
+    if (!updated) {
+      return res.status(404).json({ error: 'Object not found' });
+    }
+
+    res.json({ object: updated });
+  }
+  catch (err) {
+    console.error('Error updating object position:', err);
+    res.status(500).json({ error: 'Failed to update object' });
+  }
+}
+
+module.exports = { getObjectsInViewport, updateObjectPosition };
