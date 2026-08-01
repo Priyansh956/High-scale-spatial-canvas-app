@@ -29,6 +29,8 @@ class _CanvasScreenState extends State<CanvasScreen> {
   Offset? _dragStartWorldPos;
   double? _dragObjectStartX;
   double? _dragObjectStartY;
+  List<Offset> _dragTrail = [];
+  static const int _maxDragTrailPoints = 40;
 
   Offset? _gestureStartFocalPoint;
   bool _movedSignificantly = false;
@@ -120,6 +122,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
         _dragStartWorldPos = worldPoint;
         _dragObjectStartX = nearest.data.x;
         _dragObjectStartY = nearest.data.y;
+        _dragTrail = [worldPoint];
         return;
       }
     }
@@ -143,6 +146,14 @@ class _CanvasScreenState extends State<CanvasScreen> {
       setState(() {
         _draggingObject!.x = _dragObjectStartX! + delta.dx;
         _draggingObject!.y = _dragObjectStartY! + delta.dy;
+
+        // Append the new point (as a fresh list instance, so the painter's
+        // reference-based shouldRepaint check picks it up) and cap the
+        // length so the trail doesn't grow unbounded during a long drag.
+        _dragTrail = [..._dragTrail, worldPoint];
+        if (_dragTrail.length > _maxDragTrailPoints) {
+          _dragTrail = _dragTrail.sublist(_dragTrail.length - _maxDragTrailPoints);
+        }
       });
       return;
     }
@@ -160,11 +171,15 @@ class _CanvasScreenState extends State<CanvasScreen> {
 
       try {
         await ApiService.updateObjectPosition(obj.id, obj.x, obj.y);
-        setState(() => _rebuildQuadTree());
+        setState(() {
+          _dragTrail = [];
+          _rebuildQuadTree();
+        });
       } catch (e) {
         setState(() {
           obj.x = rollbackX;
           obj.y = rollbackY;
+          _dragTrail = [];
           _status = 'Failed to save move: $e';
           _rebuildQuadTree();
         });
@@ -224,6 +239,11 @@ class _CanvasScreenState extends State<CanvasScreen> {
                           scale: _viewportController.scale,
                           selectedId: _selectedId,
                           quadTree: _quadTree,
+                          draggingId: _draggingObject?.id,
+                          draggingPosition: _draggingObject != null
+                              ? Offset(_draggingObject!.x, _draggingObject!.y)
+                              : null,
+                          dragTrail: _dragTrail,
                         ),
                         size: size,
                       );
