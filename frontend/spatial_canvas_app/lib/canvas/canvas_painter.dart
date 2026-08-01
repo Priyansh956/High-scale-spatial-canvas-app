@@ -5,21 +5,21 @@ class CanvasPainter extends CustomPainter {
   final List<SpatialObject> objects;
   final Offset panOffset;
   final double scale;
+  final String? selectedId;
 
   CanvasPainter({
     required this.objects,
     required this.panOffset,
     required this.scale,
+    this.selectedId,
   });
 
   @override
   void paint(Canvas canvas, Size size) {
-    // Fixed background so empty canvas space isn't just transparent/white
     final backgroundPaint = Paint()..color = const Color(0xFF121212);
     canvas.drawRect(Offset.zero & size, backgroundPaint);
 
     canvas.save();
-    // Center the origin on screen, then apply pan + zoom
     canvas.translate(size.width / 2 + panOffset.dx, size.height / 2 + panOffset.dy);
     canvas.scale(scale);
 
@@ -46,6 +46,15 @@ class CanvasPainter extends CustomPainter {
         default:
           canvas.drawCircle(center, obj.size, paint);
       }
+
+      // Highlight ring for the selected object, drawn after the shape so it's on top.
+      if (obj.id == selectedId) {
+        final highlightPaint = Paint()
+          ..color = Colors.white
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 2 / scale; // keeps the ring visually consistent regardless of zoom
+        canvas.drawCircle(center, obj.size + 4, highlightPaint);
+      }
     }
 
     canvas.restore();
@@ -59,6 +68,7 @@ class CanvasPainter extends CustomPainter {
   bool shouldRepaint(covariant CanvasPainter oldDelegate) {
     return oldDelegate.objects != objects ||
         oldDelegate.panOffset != panOffset ||
-        oldDelegate.scale != scale;
+        oldDelegate.scale != scale ||
+        oldDelegate.selectedId != selectedId;
   }
 }

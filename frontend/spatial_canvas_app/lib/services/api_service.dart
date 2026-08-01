@@ -39,4 +39,22 @@ class ApiService {
         .map((json) => SpatialObject.fromJson(json as Map<String, dynamic>))
         .toList();
   }
+
+  static Future<SpatialObject> updateObjectPosition(String id, double x, double y) async {
+    final uri = Uri.parse('$baseUrl/api/objects/$id');
+
+    final response = await http.patch(
+      uri,
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({'x': x, 'y': y}),
+    );
+
+    if (response.statusCode != 200) {
+      final body = jsonDecode(response.body);
+      throw Exception(body['error'] ?? 'Failed to update object');
+    }
+
+    final data = jsonDecode(response.body);
+    return SpatialObject.fromJson(data['object']);
+  }
 }
