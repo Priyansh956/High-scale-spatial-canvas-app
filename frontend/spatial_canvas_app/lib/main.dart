@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
-import 'package:spatial_canvas_app/screens/canvas_screen.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'screens/canvas_screen.dart';
 
-void main() {
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized(); // required before any async work pre-runApp
+  await dotenv.load(fileName: '.env');
   runApp(const VisualliApp());
 }
 
@@ -14,7 +17,7 @@ class VisualliApp extends StatelessWidget {
       title: 'Visualli',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(useMaterial3: true, brightness: Brightness.dark),
-      home: const CanvasScreen()
+      home: const CanvasScreen(),
     );
   }
 }
