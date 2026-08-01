@@ -1,16 +1,19 @@
 import 'package:flutter/material.dart';
 import '../models/spatial_object.dart';
+import 'quad_tree.dart';
 
 class CanvasPainter extends CustomPainter {
   final List<SpatialObject> objects;
   final Offset panOffset;
   final double scale;
   final String? selectedId;
+  final QuadTree<SpatialObject>? quadTree;
 
   CanvasPainter({
     required this.objects,
     required this.panOffset,
     required this.scale,
+    required this.quadTree,
     this.selectedId,
   });
 
@@ -23,7 +26,18 @@ class CanvasPainter extends CustomPainter {
     canvas.translate(size.width / 2 + panOffset.dx, size.height / 2 + panOffset.dy);
     canvas.scale(scale);
 
-    for (final obj in objects) {
+    // Cull to only what's actually visible, using the quadtree instead of
+    // looping the full fetched list — this is what lets rendering cost stay
+    // flat even as more of the dataset gets held in memory over a session.
+    final visibleWorldRect = Rect.fromCenter(
+      center: Offset(-panOffset.dx / scale, -panOffset.dy / scale),
+      width: size.width / scale,
+      height: size.height / scale,
+    );
+
+    final visible = quadTree?.queryRange(visibleWorldRect).map((p) => p.data).toList() ?? objects;
+
+    for (final obj in visible) {
       final paint = Paint()..color = _parseColor(obj.color);
       final center = Offset(obj.x, obj.y);
 
@@ -47,12 +61,11 @@ class CanvasPainter extends CustomPainter {
           canvas.drawCircle(center, obj.size, paint);
       }
 
-      // Highlight ring for the selected object, drawn after the shape so it's on top.
       if (obj.id == selectedId) {
         final highlightPaint = Paint()
           ..color = Colors.white
           ..style = PaintingStyle.stroke
-          ..strokeWidth = 2 / scale; // keeps the ring visually consistent regardless of zoom
+          ..strokeWidth = 2 / scale;
         canvas.drawCircle(center, obj.size + 4, highlightPaint);
       }
     }

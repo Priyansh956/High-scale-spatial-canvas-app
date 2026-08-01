@@ -25,13 +25,11 @@ class _CanvasScreenState extends State<CanvasScreen> {
   Timer? _debounceTimer;
   int _fetchGeneration = 0;
 
-  // Drag state — null when not currently dragging an object.
   SpatialObject? _draggingObject;
   Offset? _dragStartWorldPos;
   double? _dragObjectStartX;
   double? _dragObjectStartY;
 
-  // Tap-vs-drag/pan disambiguation state.
   Offset? _gestureStartFocalPoint;
   bool _movedSignificantly = false;
   static const double _tapMovementThreshold = 8.0; // pixels
@@ -53,9 +51,6 @@ class _CanvasScreenState extends State<CanvasScreen> {
       tree.insert(QuadPoint(Offset(obj.x, obj.y), obj));
     }
     _quadTree = tree;
-    debugPrint(
-      'Quadtree rebuilt: ${_objects.length} objects in list, ${tree.count()} points in tree',
-    );
   }
 
   Future<void> _checkBackendThenFetch(Size canvasSize) async {
@@ -77,7 +72,6 @@ class _CanvasScreenState extends State<CanvasScreen> {
 
   Future<void> _fetchForCurrentViewport(Size canvasSize) async {
     final bounds = _viewportController.getBufferedViewportBounds(canvasSize);
-
     final int thisGeneration = ++_fetchGeneration;
     setState(() => _loading = true);
 
@@ -106,15 +100,9 @@ class _CanvasScreenState extends State<CanvasScreen> {
     }
   }
 
-  double _toleranceWorld() => 20.0 / _viewportController.scale;
-
   void _onScaleStart(ScaleStartDetails details, Size canvasSize) {
     _gestureStartFocalPoint = details.localFocalPoint;
     _movedSignificantly = false;
-
-    debugPrint(
-      'onScaleStart: selectedId=$_selectedId, hasQuadTree=${_quadTree != null}, canvasSize=$canvasSize',
-    );
 
     if (_selectedId != null && _quadTree != null) {
       final worldPoint = _viewportController.screenToWorld(
@@ -126,16 +114,12 @@ class _CanvasScreenState extends State<CanvasScreen> {
         (obj) => obj.size,
         8.0 / _viewportController.scale,
       );
-      debugPrint(
-        'onScaleStart: worldPoint=$worldPoint, nearestId=${nearest?.data.id}, matchesSelected=${nearest?.data.id == _selectedId}',
-      );
 
       if (nearest != null && nearest.data.id == _selectedId) {
         _draggingObject = nearest.data;
         _dragStartWorldPos = worldPoint;
         _dragObjectStartX = nearest.data.x;
         _dragObjectStartY = nearest.data.y;
-        debugPrint('onScaleStart: DRAG STARTED for ${nearest.data.id}');
         return;
       }
     }
@@ -168,7 +152,6 @@ class _CanvasScreenState extends State<CanvasScreen> {
   }
 
   Future<void> _onScaleEnd(ScaleEndDetails details, Size canvasSize) async {
-    // Case 1: was dragging an object — persist the move.
     if (_draggingObject != null) {
       final obj = _draggingObject!;
       final rollbackX = _dragObjectStartX!;
@@ -189,10 +172,6 @@ class _CanvasScreenState extends State<CanvasScreen> {
       return;
     }
 
-    // Case 2: finger barely moved and we weren't dragging — treat as a tap-to-select.
-    debugPrint(
-      'onScaleEnd: movedSignificantly=$_movedSignificantly, hasFocalPoint=${_gestureStartFocalPoint != null}, hasQuadTree=${_quadTree != null}',
-    );
     if (!_movedSignificantly &&
         _gestureStartFocalPoint != null &&
         _quadTree != null) {
@@ -200,22 +179,15 @@ class _CanvasScreenState extends State<CanvasScreen> {
         _gestureStartFocalPoint!,
         canvasSize,
       );
-
       final nearest = _quadTree!.hitTest(
         worldPoint,
         (obj) => obj.size,
         8.0 / _viewportController.scale,
       );
-
-      debugPrint(
-        'tap worldPoint=$worldPoint, tolerance=${_toleranceWorld()}, nearest=${nearest?.data.id}',
-      );
       setState(() {
-        _selectedId = nearest?.data.id; // tapping empty space deselects
+        _selectedId = nearest?.data.id;
       });
     }
-
-    // Case 3: it was a real pan gesture — nothing further to do.
   }
 
   @override
@@ -226,10 +198,8 @@ class _CanvasScreenState extends State<CanvasScreen> {
       ),
       body: LayoutBuilder(
         builder: (context, constraints) {
-          final size = constraints.biggest; // the ACTUAL body render size
+          final size = constraints.biggest;
 
-          // Kick off the initial fetch exactly once, now that we know the
-          // real canvas size (can't do this in initState — no layout yet).
           if (!_initialFetchDone) {
             _initialFetchDone = true;
             WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -253,6 +223,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
                           panOffset: _viewportController.panOffset,
                           scale: _viewportController.scale,
                           selectedId: _selectedId,
+                          quadTree: _quadTree,
                         ),
                         size: size,
                       );
