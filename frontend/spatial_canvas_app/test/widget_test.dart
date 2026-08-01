@@ -4,8 +4,8 @@ import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:spatial_canvas_app/main.dart';
 
 void main() {
-  setUpAll(() {
-    dotenv.env['API_BASE_URL'] = 'http://localhost:4000';
+  setUpAll(() async {
+    await dotenv.load(fileName: '.env');
   });
 
   testWidgets('App builds and renders the canvas without crashing', (WidgetTester tester) async {
