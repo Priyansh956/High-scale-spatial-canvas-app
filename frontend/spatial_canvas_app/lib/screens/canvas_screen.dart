@@ -88,7 +88,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
       if (thisGeneration != _fetchGeneration) return;
 
       setState(() {
-        _objects = objects;
+        _objects = objects;  
         _status = 'Loaded ${objects.length} objects';
         _loading = false;
         _rebuildQuadTree();

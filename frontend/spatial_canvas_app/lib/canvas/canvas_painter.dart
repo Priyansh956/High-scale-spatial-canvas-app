@@ -54,9 +54,9 @@ class CanvasPainter extends CustomPainter {
     // toward the older points.
     if (dragTrail.length > 1) {
       for (int i = 1; i < dragTrail.length; i++) {
-        final t = i / dragTrail.length; // 0 (oldest) -> 1 (newest)
+        // final t = i / dragTrail.length; // 0 (oldest) -> 1 (newest)
         final trailPaint = Paint()
-          ..color = Colors.white.withOpacity(0.05 + 0.35 * t)
+          ..color = Colors.black.withValues(alpha: 0.5)
           ..style = PaintingStyle.stroke
           ..strokeWidth = 2 / scale
           ..strokeCap = StrokeCap.round;
