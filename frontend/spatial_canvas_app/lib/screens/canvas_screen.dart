@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../services/api_service.dart';
 import '../models/spatial_object.dart';
 import '../canvas/canvas_painter.dart';
+import '../canvas/viewport_controller.dart';
 
 class CanvasScreen extends StatefulWidget {
   const CanvasScreen({super.key});
@@ -15,16 +16,24 @@ class _CanvasScreenState extends State<CanvasScreen> {
   List<SpatialObject> _objects = [];
   bool _loading = false;
 
+  final ViewportController _viewportController = ViewportController();
+
   @override
   void initState() {
     super.initState();
     _checkBackendThenFetch();
   }
 
+  @override
+  void dispose() {
+    _viewportController.dispose();
+    super.dispose();
+  }
+
   Future<void> _checkBackendThenFetch() async {
     final isHealthy = await ApiService.checkHealth();
     if (!isHealthy) {
-      setState(() => _status = '❌ Could not reach backend');
+      setState(() => _status = 'Could not reach backend');
       return;
     }
 
@@ -59,14 +68,23 @@ class _CanvasScreenState extends State<CanvasScreen> {
       appBar: AppBar(title: Text(_status, style: const TextStyle(fontSize: 14))),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
-          : RepaintBoundary(
-              child: CustomPaint(
-                painter: CanvasPainter(
-                  objects: _objects,
-                  panOffset: Offset.zero, // hardcoded for now — Module 8 makes this live
-                  scale: 0.3,             // fit a 1000-radius viewport into a typical screen
+          : GestureDetector(
+              onScaleStart: _viewportController.onScaleStart,
+              onScaleUpdate: _viewportController.onScaleUpdate,
+              child: RepaintBoundary(
+                child: AnimatedBuilder(
+                  animation: _viewportController,
+                  builder: (context, _) {
+                    return CustomPaint(
+                      painter: CanvasPainter(
+                        objects: _objects,
+                        panOffset: _viewportController.panOffset,
+                        scale: _viewportController.scale,
+                      ),
+                      size: Size.infinite,
+                    );
+                  },
                 ),
-                size: Size.infinite,
               ),
             ),
     );
