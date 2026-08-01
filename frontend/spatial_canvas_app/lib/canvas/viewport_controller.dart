@@ -41,4 +41,16 @@ class ViewportController extends ChangeNotifier {
     final bottomRight = screenToWorld(Offset(canvasSize.width, canvasSize.height), canvasSize);
     return Rect.fromPoints(topLeft, bottomRight);
   }
+
+  Rect getBufferedViewportBounds(Size canvasSize, {double bufferFactor = 0.3}) {
+    final bounds = getViewportBounds(canvasSize);
+    final dx = bounds.width * bufferFactor;
+    final dy = bounds.height * bufferFactor;
+    return Rect.fromLTRB(
+      bounds.left - dx,
+      bounds.top - dy,
+      bounds.right + dx,
+      bounds.bottom + dy,
+    );
+  }
 }
