@@ -40,7 +40,11 @@ class ApiService {
         .toList();
   }
 
-  static Future<SpatialObject> updateObjectPosition(String id, double x, double y) async {
+  static Future<SpatialObject> updateObjectPosition(
+    String id,
+    double x,
+    double y,
+  ) async {
     final uri = Uri.parse('$baseUrl/api/objects/$id');
 
     final response = await http.patch(

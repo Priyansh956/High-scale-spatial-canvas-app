@@ -9,12 +9,25 @@ class CanvasPainter extends CustomPainter {
   final String? selectedId;
   final QuadTree<SpatialObject>? quadTree;
 
+  // Position of the object currently being dragged (world coords), and its
+  // id. Passed explicitly (rather than relying on the mutated object inside
+  // `objects`) so shouldRepaint can actually detect the change every frame.
+  final String? draggingId;
+  final Offset? draggingPosition;
+
+  // Trail of recent world-space points the finger has passed through while
+  // dragging, used to draw a real-time path trace.
+  final List<Offset> dragTrail;
+
   CanvasPainter({
     required this.objects,
     required this.panOffset,
     required this.scale,
     required this.quadTree,
     this.selectedId,
+    this.draggingId,
+    this.draggingPosition,
+    this.dragTrail = const [],
   });
 
   @override
@@ -37,9 +50,27 @@ class CanvasPainter extends CustomPainter {
 
     final visible = quadTree?.queryRange(visibleWorldRect).map((p) => p.data).toList() ?? objects;
 
+    // Draw the real-time drag trail underneath everything else, fading out
+    // toward the older points.
+    if (dragTrail.length > 1) {
+      for (int i = 1; i < dragTrail.length; i++) {
+        // final t = i / dragTrail.length; // 0 (oldest) -> 1 (newest)
+        final trailPaint = Paint()
+          ..color = Colors.black.withValues(alpha: 0.5)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 2 / scale
+          ..strokeCap = StrokeCap.round;
+        canvas.drawLine(dragTrail[i - 1], dragTrail[i], trailPaint);
+      }
+    }
+
     for (final obj in visible) {
       final paint = Paint()..color = _parseColor(obj.color);
-      final center = Offset(obj.x, obj.y);
+      // Use the live drag position for the object currently being dragged,
+      // since `obj` itself may be a stale reference from a cached query.
+      final center = (obj.id == draggingId && draggingPosition != null)
+          ? draggingPosition!
+          : Offset(obj.x, obj.y);
 
       switch (obj.shape) {
         case 'square':
@@ -82,6 +113,10 @@ class CanvasPainter extends CustomPainter {
     return oldDelegate.objects != objects ||
         oldDelegate.panOffset != panOffset ||
         oldDelegate.scale != scale ||
-        oldDelegate.selectedId != selectedId;
+        oldDelegate.selectedId != selectedId ||
+        oldDelegate.quadTree != quadTree ||
+        oldDelegate.draggingId != draggingId ||
+        oldDelegate.draggingPosition != draggingPosition ||
+        oldDelegate.dragTrail != dragTrail;
   }
 }
