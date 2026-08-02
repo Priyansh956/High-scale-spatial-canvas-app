@@ -1,7 +1,11 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:spatial_canvas_app/widgets/fps_counter.dart';
+import 'package:spatial_canvas_app/widgets/canvas_skeleton.dart';
+import 'package:spatial_canvas_app/widgets/canvas_error_state.dart';
 import '../services/api_service.dart';
 import '../models/spatial_object.dart';
+import '../models/cluster_point.dart';
 import '../canvas/canvas_painter.dart';
 import '../canvas/viewport_controller.dart';
 import '../canvas/quad_tree.dart';
@@ -17,7 +21,6 @@ class _CanvasScreenState extends State<CanvasScreen> {
   String _status = 'Checking backend connection...';
   List<SpatialObject> _objects = [];
   bool _loading = false;
-  String? _selectedId;
 
   final ViewportController _viewportController = ViewportController();
   QuadTree<SpatialObject>? _quadTree;
@@ -25,10 +28,14 @@ class _CanvasScreenState extends State<CanvasScreen> {
   Timer? _debounceTimer;
   int _fetchGeneration = 0;
 
-  SpatialObject? _draggingObject;
+  // --- Selection ---
+  Set<String> _selectedIds = {};
+  bool _multiSelectMode = false;
+
+  List<SpatialObject> _draggingObjects = [];
+  Map<String, Offset> _dragStartPositions = {};
   Offset? _dragStartWorldPos;
-  double? _dragObjectStartX;
-  double? _dragObjectStartY;
+
   List<Offset> _dragTrail = [];
   static const int _maxDragTrailPoints = 40;
 
@@ -37,6 +44,12 @@ class _CanvasScreenState extends State<CanvasScreen> {
   static const double _tapMovementThreshold = 8.0; // pixels
 
   bool _initialFetchDone = false;
+  bool _firstLoadComplete = false;
+  bool _hasError = false;
+
+  List<ClusterPoint> _clusters = [];
+  bool _isClusterMode = false;
+  static const double _clusterModeThreshold = 0.05;
 
   @override
   void dispose() {
@@ -58,10 +71,16 @@ class _CanvasScreenState extends State<CanvasScreen> {
   Future<void> _checkBackendThenFetch(Size canvasSize) async {
     final isHealthy = await ApiService.checkHealth();
     if (!isHealthy) {
-      setState(() => _status = 'Could not reach backend');
+      setState(() {
+        _status = 'Could not reach backend';
+        _hasError = true;
+      });
       return;
     }
-    setState(() => _status = 'Connected');
+    setState(() {
+      _status = 'Connected';
+      _hasError = false;
+    });
     await _fetchForCurrentViewport(canvasSize);
   }
 
@@ -74,10 +93,37 @@ class _CanvasScreenState extends State<CanvasScreen> {
 
   Future<void> _fetchForCurrentViewport(Size canvasSize) async {
     final bounds = _viewportController.getBufferedViewportBounds(canvasSize);
+    final scale = _viewportController.scale;
+    final useClusters = scale < _clusterModeThreshold;
+
     final int thisGeneration = ++_fetchGeneration;
     setState(() => _loading = true);
 
     try {
+      if (useClusters) {
+        final gridSize = 500.0 / scale.clamp(0.001, 1.0);
+        final clusters = await ApiService.fetchClusters(
+          minX: bounds.left,
+          minY: bounds.top,
+          maxX: bounds.right,
+          maxY: bounds.bottom,
+          gridSize: gridSize,
+        );
+        if (thisGeneration != _fetchGeneration) return;
+        setState(() {
+          _clusters = clusters;
+          _objects = [];
+          _isClusterMode = true;
+          _status = 'Showing ${clusters.length} clusters (zoomed out)';
+          _loading = false;
+          _firstLoadComplete = true;
+          _hasError = false;
+          _quadTree = null;
+          _selectedIds = {}; // selection doesn't survive into cluster mode
+        });
+        return;
+      }
+
       final objects = await ApiService.fetchObjectsInViewport(
         minX: bounds.left,
         minY: bounds.top,
@@ -88,16 +134,24 @@ class _CanvasScreenState extends State<CanvasScreen> {
       if (thisGeneration != _fetchGeneration) return;
 
       setState(() {
-        _objects = objects;  
+        _objects = objects;
+        _clusters = [];
+        _isClusterMode = false;
         _status = 'Loaded ${objects.length} objects';
         _loading = false;
+        _firstLoadComplete = true;
+        _hasError = false;
         _rebuildQuadTree();
+        // Drop any selected ids that fell outside the newly fetched region.
+        final fetchedIds = objects.map((o) => o.id).toSet();
+        _selectedIds = _selectedIds.intersection(fetchedIds);
       });
     } catch (e) {
       if (thisGeneration != _fetchGeneration) return;
       setState(() {
         _status = 'Fetch failed: $e';
         _loading = false;
+        _hasError = true;
       });
     }
   }
@@ -106,28 +160,31 @@ class _CanvasScreenState extends State<CanvasScreen> {
     _gestureStartFocalPoint = details.localFocalPoint;
     _movedSignificantly = false;
 
-    if (_selectedId != null && _quadTree != null) {
+    if (_selectedIds.isNotEmpty && _quadTree != null) {
       final worldPoint = _viewportController.screenToWorld(
         details.localFocalPoint,
         canvasSize,
       );
-      final nearest = _quadTree!.hitTest(
+      final hit = _quadTree!.hitTest(
         worldPoint,
         (obj) => obj.size,
         8.0 / _viewportController.scale,
       );
 
-      if (nearest != null && nearest.data.id == _selectedId) {
-        _draggingObject = nearest.data;
+      // Gesture starts a bulk drag only if it lands on an object that's
+      // actually part of the current selection — otherwise it's a pan.
+      if (hit != null && _selectedIds.contains(hit.data.id)) {
+        _draggingObjects = _objects.where((o) => _selectedIds.contains(o.id)).toList();
+        _dragStartPositions = {
+          for (final o in _draggingObjects) o.id: Offset(o.x, o.y),
+        };
         _dragStartWorldPos = worldPoint;
-        _dragObjectStartX = nearest.data.x;
-        _dragObjectStartY = nearest.data.y;
         _dragTrail = [worldPoint];
         return;
       }
     }
 
-    _draggingObject = null;
+    _draggingObjects = [];
     _viewportController.onScaleStart(details);
   }
 
@@ -136,7 +193,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
         (details.localFocalPoint - _gestureStartFocalPoint!).distance;
     if (movedDist > _tapMovementThreshold) _movedSignificantly = true;
 
-    if (_draggingObject != null) {
+    if (_draggingObjects.isNotEmpty) {
       final worldPoint = _viewportController.screenToWorld(
         details.localFocalPoint,
         canvasSize,
@@ -144,12 +201,12 @@ class _CanvasScreenState extends State<CanvasScreen> {
       final delta = worldPoint - _dragStartWorldPos!;
 
       setState(() {
-        _draggingObject!.x = _dragObjectStartX! + delta.dx;
-        _draggingObject!.y = _dragObjectStartY! + delta.dy;
+        for (final obj in _draggingObjects) {
+          final start = _dragStartPositions[obj.id]!;
+          obj.x = start.dx + delta.dx;
+          obj.y = start.dy + delta.dy;
+        }
 
-        // Append the new point (as a fresh list instance, so the painter's
-        // reference-based shouldRepaint check picks it up) and cap the
-        // length so the trail doesn't grow unbounded during a long drag.
         _dragTrail = [..._dragTrail, worldPoint];
         if (_dragTrail.length > _maxDragTrailPoints) {
           _dragTrail = _dragTrail.sublist(_dragTrail.length - _maxDragTrailPoints);
@@ -163,27 +220,35 @@ class _CanvasScreenState extends State<CanvasScreen> {
   }
 
   Future<void> _onScaleEnd(ScaleEndDetails details, Size canvasSize) async {
-    if (_draggingObject != null) {
-      final obj = _draggingObject!;
-      final rollbackX = _dragObjectStartX!;
-      final rollbackY = _dragObjectStartY!;
-      _draggingObject = null;
+    if (_draggingObjects.isNotEmpty) {
+      final draggedObjects = _draggingObjects;
+      final startPositions = _dragStartPositions;
+      _draggingObjects = [];
+      _dragStartPositions = {};
 
-      try {
-        await ApiService.updateObjectPosition(obj.id, obj.x, obj.y);
-        setState(() {
-          _dragTrail = [];
-          _rebuildQuadTree();
-        });
-      } catch (e) {
-        setState(() {
-          obj.x = rollbackX;
-          obj.y = rollbackY;
-          _dragTrail = [];
-          _status = 'Failed to save move: $e';
-          _rebuildQuadTree();
-        });
-      }
+      final failedObjects = <SpatialObject>[];
+      await Future.wait(draggedObjects.map((obj) async {
+        try {
+          await ApiService.updateObjectPosition(obj.id, obj.x, obj.y);
+        } catch (_) {
+          failedObjects.add(obj);
+        }
+      }));
+
+      setState(() {
+        for (final obj in failedObjects) {
+          final start = startPositions[obj.id]!;
+          obj.x = start.dx;
+          obj.y = start.dy;
+        }
+        _dragTrail = [];
+        if (failedObjects.isNotEmpty) {
+          _status = failedObjects.length == draggedObjects.length
+              ? 'Failed to save move'
+              : 'Saved ${draggedObjects.length - failedObjects.length}/${draggedObjects.length} — ${failedObjects.length} rolled back';
+        }
+        _rebuildQuadTree();
+      });
       return;
     }
 
@@ -194,15 +259,39 @@ class _CanvasScreenState extends State<CanvasScreen> {
         _gestureStartFocalPoint!,
         canvasSize,
       );
-      final nearest = _quadTree!.hitTest(
+      final hit = _quadTree!.hitTest(
         worldPoint,
         (obj) => obj.size,
         8.0 / _viewportController.scale,
       );
+
       setState(() {
-        _selectedId = nearest?.data.id;
+        if (_multiSelectMode) {
+          if (hit == null) {
+            _selectedIds = {};
+          } else {
+            final id = hit.data.id;
+            _selectedIds = {..._selectedIds};
+            if (_selectedIds.contains(id)) {
+              _selectedIds.remove(id);
+            } else {
+              _selectedIds.add(id);
+            }
+          }
+        } else {
+          _selectedIds = hit != null ? {hit.data.id} : {};
+        }
       });
     }
+  }
+
+  void _toggleMultiSelectMode() {
+    setState(() {
+      _multiSelectMode = !_multiSelectMode;
+      if (!_multiSelectMode && _selectedIds.length > 1) {
+        _selectedIds = {_selectedIds.first};
+      }
+    });
   }
 
   @override
@@ -210,6 +299,29 @@ class _CanvasScreenState extends State<CanvasScreen> {
     return Scaffold(
       appBar: AppBar(
         title: Text(_status, style: const TextStyle(fontSize: 14)),
+        actions: [
+          if (_selectedIds.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              child: Center(
+                child: Text(
+                  '${_selectedIds.length} selected',
+                  style: const TextStyle(fontSize: 13),
+                ),
+              ),
+            ),
+          if (_selectedIds.isNotEmpty)
+            IconButton(
+              icon: const Icon(Icons.close),
+              tooltip: 'Clear selection',
+              onPressed: () => setState(() => _selectedIds = {}),
+            ),
+          IconButton(
+            icon: Icon(_multiSelectMode ? Icons.check_box : Icons.check_box_outline_blank),
+            tooltip: _multiSelectMode ? 'Exit multi-select' : 'Multi-select mode',
+            onPressed: _toggleMultiSelectMode,
+          ),
+        ],
       ),
       body: LayoutBuilder(
         builder: (context, constraints) {
@@ -220,6 +332,17 @@ class _CanvasScreenState extends State<CanvasScreen> {
             WidgetsBinding.instance.addPostFrameCallback((_) {
               _checkBackendThenFetch(size);
             });
+          }
+
+          if (!_firstLoadComplete && !_hasError) {
+            return const CanvasSkeleton();
+          }
+
+          if (!_firstLoadComplete && _hasError) {
+            return CanvasErrorState(
+              message: _status,
+              onRetry: () => _checkBackendThenFetch(size),
+            );
           }
 
           return Stack(
@@ -235,14 +358,15 @@ class _CanvasScreenState extends State<CanvasScreen> {
                       return CustomPaint(
                         painter: CanvasPainter(
                           objects: _objects,
+                          clusters: _clusters,
+                          isClusterMode: _isClusterMode,
                           panOffset: _viewportController.panOffset,
                           scale: _viewportController.scale,
-                          selectedId: _selectedId,
+                          selectedIds: _selectedIds,
                           quadTree: _quadTree,
-                          draggingId: _draggingObject?.id,
-                          draggingPosition: _draggingObject != null
-                              ? Offset(_draggingObject!.x, _draggingObject!.y)
-                              : null,
+                          draggingPositions: {
+                            for (final o in _draggingObjects) o.id: Offset(o.x, o.y),
+                          },
                           dragTrail: _dragTrail,
                         ),
                         size: size,
@@ -259,6 +383,26 @@ class _CanvasScreenState extends State<CanvasScreen> {
                     width: 20,
                     height: 20,
                     child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                ),
+              const Positioned(top: 8, left: 8, child: FpsCounter()),
+              if (_multiSelectMode)
+                Positioned(
+                  bottom: 16,
+                  left: 0,
+                  right: 0,
+                  child: Center(
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: Colors.black54,
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      child: const Text(
+                        'Multi-select: tap to add/remove · drag any selected shape to move all',
+                        style: TextStyle(color: Colors.white70, fontSize: 12),
+                      ),
+                    ),
                   ),
                 ),
             ],

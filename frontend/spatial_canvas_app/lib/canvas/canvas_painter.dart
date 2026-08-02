@@ -1,33 +1,35 @@
 import 'package:flutter/material.dart';
 import '../models/spatial_object.dart';
+import '../models/cluster_point.dart';
 import 'quad_tree.dart';
 
 class CanvasPainter extends CustomPainter {
   final List<SpatialObject> objects;
   final Offset panOffset;
   final double scale;
-  final String? selectedId;
+  final Set<String> selectedIds;
   final QuadTree<SpatialObject>? quadTree;
 
-  // Position of the object currently being dragged (world coords), and its
-  // id. Passed explicitly (rather than relying on the mutated object inside
+  // Live world-space positions for objects currently mid-drag, keyed by id.
+  // Passed explicitly (rather than relying on the mutated object inside
   // `objects`) so shouldRepaint can actually detect the change every frame.
-  final String? draggingId;
-  final Offset? draggingPosition;
+  final Map<String, Offset> draggingPositions;
 
-  // Trail of recent world-space points the finger has passed through while
-  // dragging, used to draw a real-time path trace.
   final List<Offset> dragTrail;
+
+  final List<ClusterPoint> clusters;
+  final bool isClusterMode;
 
   CanvasPainter({
     required this.objects,
     required this.panOffset,
     required this.scale,
     required this.quadTree,
-    this.selectedId,
-    this.draggingId,
-    this.draggingPosition,
+    this.selectedIds = const {},
+    this.draggingPositions = const {},
     this.dragTrail = const [],
+    this.clusters = const [],
+    this.isClusterMode = false,
   });
 
   @override
@@ -39,9 +41,12 @@ class CanvasPainter extends CustomPainter {
     canvas.translate(size.width / 2 + panOffset.dx, size.height / 2 + panOffset.dy);
     canvas.scale(scale);
 
-    // Cull to only what's actually visible, using the quadtree instead of
-    // looping the full fetched list — this is what lets rendering cost stay
-    // flat even as more of the dataset gets held in memory over a session.
+    if (isClusterMode) {
+      _paintClusters(canvas);
+      canvas.restore();
+      return;
+    }
+
     final visibleWorldRect = Rect.fromCenter(
       center: Offset(-panOffset.dx / scale, -panOffset.dy / scale),
       width: size.width / scale,
@@ -50,11 +55,8 @@ class CanvasPainter extends CustomPainter {
 
     final visible = quadTree?.queryRange(visibleWorldRect).map((p) => p.data).toList() ?? objects;
 
-    // Draw the real-time drag trail underneath everything else, fading out
-    // toward the older points.
     if (dragTrail.length > 1) {
       for (int i = 1; i < dragTrail.length; i++) {
-        // final t = i / dragTrail.length; // 0 (oldest) -> 1 (newest)
         final trailPaint = Paint()
           ..color = Colors.black.withValues(alpha: 0.5)
           ..style = PaintingStyle.stroke
@@ -66,11 +68,8 @@ class CanvasPainter extends CustomPainter {
 
     for (final obj in visible) {
       final paint = Paint()..color = _parseColor(obj.color);
-      // Use the live drag position for the object currently being dragged,
-      // since `obj` itself may be a stale reference from a cached query.
-      final center = (obj.id == draggingId && draggingPosition != null)
-          ? draggingPosition!
-          : Offset(obj.x, obj.y);
+      final liveDragPos = draggingPositions[obj.id];
+      final center = liveDragPos ?? Offset(obj.x, obj.y);
 
       switch (obj.shape) {
         case 'square':
@@ -92,7 +91,7 @@ class CanvasPainter extends CustomPainter {
           canvas.drawCircle(center, obj.size, paint);
       }
 
-      if (obj.id == selectedId) {
+      if (selectedIds.contains(obj.id)) {
         final highlightPaint = Paint()
           ..color = Colors.white
           ..style = PaintingStyle.stroke
@@ -104,6 +103,32 @@ class CanvasPainter extends CustomPainter {
     canvas.restore();
   }
 
+  void _paintClusters(Canvas canvas) {
+    for (final c in clusters) {
+      final radius = (8 + (c.count.clamp(1, 500)) * 0.15).clamp(8, 60).toDouble();
+      final center = Offset(c.x, c.y);
+
+      canvas.drawCircle(
+        center,
+        radius,
+        Paint()..color = Colors.deepPurpleAccent.withValues(alpha: 0.6),
+      );
+
+      final textPainter = TextPainter(
+        text: TextSpan(
+          text: '${c.count}',
+          style: TextStyle(color: Colors.white, fontSize: 12 / scale),
+        ),
+        textDirection: TextDirection.ltr,
+      )..layout();
+
+      textPainter.paint(
+        canvas,
+        center - Offset(textPainter.width / 2, textPainter.height / 2),
+      );
+    }
+  }
+
   Color _parseColor(String hex) {
     return Color(int.parse(hex.replaceFirst('#', '0xFF')));
   }
@@ -113,10 +138,11 @@ class CanvasPainter extends CustomPainter {
     return oldDelegate.objects != objects ||
         oldDelegate.panOffset != panOffset ||
         oldDelegate.scale != scale ||
-        oldDelegate.selectedId != selectedId ||
+        oldDelegate.selectedIds != selectedIds ||
         oldDelegate.quadTree != quadTree ||
-        oldDelegate.draggingId != draggingId ||
-        oldDelegate.draggingPosition != draggingPosition ||
-        oldDelegate.dragTrail != dragTrail;
+        oldDelegate.draggingPositions != draggingPositions ||
+        oldDelegate.dragTrail != dragTrail ||
+        oldDelegate.clusters != clusters ||
+        oldDelegate.isClusterMode != isClusterMode;
   }
 }

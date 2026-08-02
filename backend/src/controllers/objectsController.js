@@ -91,6 +91,55 @@ async function updateObjectPosition(req, res) {
     console.error('Error updating object position:', err);
     res.status(500).json({ error: 'Failed to update object' });
   }
+
+  async function getClusteredObjects(req, res) {
+  const { minX, minY, maxX, maxY, gridSize } = req.query;
+
+  const coords = { minX, minY, maxX, maxY, gridSize };
+  for (const [key, val] of Object.entries(coords)) {
+    if (val === undefined || Number.isNaN(Number(val))) {
+      return res.status(400).json({ error: `Missing or invalid query param: ${key}` });
+    }
+  }
+
+  const g = Number(gridSize);
+
+  try {
+    const clusters = await SpatialObject.aggregate([
+      {
+        $match: {
+          loc: {
+            $geoWithin: {
+              $box: [
+                [Number(minX), Number(minY)],
+                [Number(maxX), Number(maxY)],
+              ],
+            },
+          },
+        },
+      },
+      {
+        $group: {
+          _id: {
+            gx: { $floor: { $divide: [{ $arrayElemAt: ['$loc', 0] }, g] } },
+            gy: { $floor: { $divide: [{ $arrayElemAt: ['$loc', 1] }, g] } },
+          },
+          count: { $sum: 1 },
+          avgX: { $avg: { $arrayElemAt: ['$loc', 0] } },
+          avgY: { $avg: { $arrayElemAt: ['$loc', 1] } },
+        },
+      },
+      { $limit: 500 },
+    ]);
+
+    res.json({
+      clusters: clusters.map((c) => ({ x: c.avgX, y: c.avgY, count: c.count })),
+    });
+  } catch (err) {
+    console.error('Error clustering objects:', err);
+    res.status(500).json({ error: 'Failed to fetch clusters' });
+  }
+}
 }
 
-module.exports = { getObjectsInViewport, updateObjectPosition };
+module.exports = { getObjectsInViewport, updateObjectPosition, getClusteredObjects };
