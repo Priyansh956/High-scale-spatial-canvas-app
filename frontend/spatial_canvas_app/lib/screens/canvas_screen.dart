@@ -215,7 +215,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
         builder: (context, constraints) {
           final size = constraints.biggest;
 
-          if (!_initialFetchDone) {
+          if (!_initialFetchDone && size.width > 0 && size.height > 0 && size.isFinite) {
             _initialFetchDone = true;
             WidgetsBinding.instance.addPostFrameCallback((_) {
               _checkBackendThenFetch(size);

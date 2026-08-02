@@ -10,7 +10,9 @@ class ApiService {
 
   static Future<bool> checkHealth() async {
     try {
-      final response = await http.get(Uri.parse('$baseUrl/api/health'));
+      final response = await http
+          .get(Uri.parse('$baseUrl/api/health'))
+          .timeout(const Duration(seconds: 60)); // give Render time to wake up
       return response.statusCode == 200;
     } catch (e) {
       debugPrint('Health check failed: $e');
@@ -28,7 +30,7 @@ class ApiService {
       '$baseUrl/api/objects?minX=$minX&minY=$minY&maxX=$maxX&maxY=$maxY',
     );
 
-    final response = await http.get(uri);
+    final response = await http.get(uri).timeout(const Duration(seconds: 60));
 
     if (response.statusCode != 200) {
       throw Exception('Failed to fetch objects: ${response.statusCode}');
