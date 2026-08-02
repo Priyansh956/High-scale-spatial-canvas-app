@@ -1,7 +1,11 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:spatial_canvas_app/widgets/fps_counter.dart';
+import 'package:spatial_canvas_app/widgets/canvas_skeleton.dart';
+import 'package:spatial_canvas_app/widgets/canvas_error_state.dart';
 import '../services/api_service.dart';
 import '../models/spatial_object.dart';
+import '../models/cluster_point.dart';
 import '../canvas/canvas_painter.dart';
 import '../canvas/viewport_controller.dart';
 import '../canvas/quad_tree.dart';
@@ -38,6 +42,15 @@ class _CanvasScreenState extends State<CanvasScreen> {
 
   bool _initialFetchDone = false;
 
+  // Tier 1 additions: first-load skeleton vs. transient corner-spinner refetches,
+  // real error state, and low-zoom clustering.
+  bool _firstLoadComplete = false;
+  bool _hasError = false;
+
+  List<ClusterPoint> _clusters = [];
+  bool _isClusterMode = false;
+  static const double _clusterModeThreshold = 0.05; // switch to clusters below this zoom
+
   @override
   void dispose() {
     _debounceTimer?.cancel();
@@ -58,10 +71,16 @@ class _CanvasScreenState extends State<CanvasScreen> {
   Future<void> _checkBackendThenFetch(Size canvasSize) async {
     final isHealthy = await ApiService.checkHealth();
     if (!isHealthy) {
-      setState(() => _status = 'Could not reach backend');
+      setState(() {
+        _status = 'Could not reach backend';
+        _hasError = true;
+      });
       return;
     }
-    setState(() => _status = 'Connected');
+    setState(() {
+      _status = 'Connected';
+      _hasError = false;
+    });
     await _fetchForCurrentViewport(canvasSize);
   }
 
@@ -74,10 +93,38 @@ class _CanvasScreenState extends State<CanvasScreen> {
 
   Future<void> _fetchForCurrentViewport(Size canvasSize) async {
     final bounds = _viewportController.getBufferedViewportBounds(canvasSize);
+    final scale = _viewportController.scale;
+    final useClusters = scale < _clusterModeThreshold;
+
     final int thisGeneration = ++_fetchGeneration;
     setState(() => _loading = true);
 
     try {
+      if (useClusters) {
+        final gridSize = 500.0 / scale.clamp(0.001, 1.0);
+        final clusters = await ApiService.fetchClusters(
+          minX: bounds.left,
+          minY: bounds.top,
+          maxX: bounds.right,
+          maxY: bounds.bottom,
+          gridSize: gridSize,
+        );
+
+        if (thisGeneration != _fetchGeneration) return;
+
+        setState(() {
+          _clusters = clusters;
+          _objects = [];
+          _isClusterMode = true;
+          _status = 'Showing ${clusters.length} clusters (zoomed out)';
+          _loading = false;
+          _firstLoadComplete = true;
+          _hasError = false;
+          _quadTree = null; // no per-object hit-testing in cluster mode
+        });
+        return;
+      }
+
       final objects = await ApiService.fetchObjectsInViewport(
         minX: bounds.left,
         minY: bounds.top,
@@ -88,9 +135,13 @@ class _CanvasScreenState extends State<CanvasScreen> {
       if (thisGeneration != _fetchGeneration) return;
 
       setState(() {
-        _objects = objects;  
+        _objects = objects;
+        _clusters = [];
+        _isClusterMode = false;
         _status = 'Loaded ${objects.length} objects';
         _loading = false;
+        _firstLoadComplete = true;
+        _hasError = false;
         _rebuildQuadTree();
       });
     } catch (e) {
@@ -98,6 +149,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
       setState(() {
         _status = 'Fetch failed: $e';
         _loading = false;
+        _hasError = true;
       });
     }
   }
@@ -147,9 +199,6 @@ class _CanvasScreenState extends State<CanvasScreen> {
         _draggingObject!.x = _dragObjectStartX! + delta.dx;
         _draggingObject!.y = _dragObjectStartY! + delta.dy;
 
-        // Append the new point (as a fresh list instance, so the painter's
-        // reference-based shouldRepaint check picks it up) and cap the
-        // length so the trail doesn't grow unbounded during a long drag.
         _dragTrail = [..._dragTrail, worldPoint];
         if (_dragTrail.length > _maxDragTrailPoints) {
           _dragTrail = _dragTrail.sublist(_dragTrail.length - _maxDragTrailPoints);
@@ -222,6 +271,20 @@ class _CanvasScreenState extends State<CanvasScreen> {
             });
           }
 
+          // First load never happened yet — show the skeleton, not a blank canvas.
+          if (!_firstLoadComplete && !_hasError) {
+            return const CanvasSkeleton();
+          }
+
+          // First load itself failed — show a real error state with retry,
+          // not just AppBar text over an empty screen.
+          if (!_firstLoadComplete && _hasError) {
+            return CanvasErrorState(
+              message: _status,
+              onRetry: () => _checkBackendThenFetch(size),
+            );
+          }
+
           return Stack(
             children: [
               GestureDetector(
@@ -235,6 +298,8 @@ class _CanvasScreenState extends State<CanvasScreen> {
                       return CustomPaint(
                         painter: CanvasPainter(
                           objects: _objects,
+                          clusters: _clusters,
+                          isClusterMode: _isClusterMode,
                           panOffset: _viewportController.panOffset,
                           scale: _viewportController.scale,
                           selectedId: _selectedId,
@@ -261,6 +326,8 @@ class _CanvasScreenState extends State<CanvasScreen> {
                     child: CircularProgressIndicator(strokeWidth: 2),
                   ),
                 ),
+
+              const Positioned(top: 8, left: 8, child: FpsCounter()),
             ],
           );
         },

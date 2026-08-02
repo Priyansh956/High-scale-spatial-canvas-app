@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../models/spatial_object.dart';
+import '../models/cluster_point.dart';
 import 'quad_tree.dart';
 
 class CanvasPainter extends CustomPainter {
@@ -19,6 +20,11 @@ class CanvasPainter extends CustomPainter {
   // dragging, used to draw a real-time path trace.
   final List<Offset> dragTrail;
 
+  // Low-zoom clustering: when isClusterMode is true, clusters is rendered
+  // instead of objects — aggregated count-bubbles rather than raw shapes.
+  final List<ClusterPoint> clusters;
+  final bool isClusterMode;
+
   CanvasPainter({
     required this.objects,
     required this.panOffset,
@@ -28,6 +34,8 @@ class CanvasPainter extends CustomPainter {
     this.draggingId,
     this.draggingPosition,
     this.dragTrail = const [],
+    this.clusters = const [],
+    this.isClusterMode = false,
   });
 
   @override
@@ -38,6 +46,12 @@ class CanvasPainter extends CustomPainter {
     canvas.save();
     canvas.translate(size.width / 2 + panOffset.dx, size.height / 2 + panOffset.dy);
     canvas.scale(scale);
+
+    if (isClusterMode) {
+      _paintClusters(canvas);
+      canvas.restore();
+      return;
+    }
 
     // Cull to only what's actually visible, using the quadtree instead of
     // looping the full fetched list — this is what lets rendering cost stay
@@ -54,7 +68,6 @@ class CanvasPainter extends CustomPainter {
     // toward the older points.
     if (dragTrail.length > 1) {
       for (int i = 1; i < dragTrail.length; i++) {
-        // final t = i / dragTrail.length; // 0 (oldest) -> 1 (newest)
         final trailPaint = Paint()
           ..color = Colors.black.withValues(alpha: 0.5)
           ..style = PaintingStyle.stroke
@@ -104,6 +117,32 @@ class CanvasPainter extends CustomPainter {
     canvas.restore();
   }
 
+  void _paintClusters(Canvas canvas) {
+    for (final c in clusters) {
+      final radius = (8 + (c.count.clamp(1, 500)) * 0.15).clamp(8, 60).toDouble();
+      final center = Offset(c.x, c.y);
+
+      canvas.drawCircle(
+        center,
+        radius,
+        Paint()..color = Colors.deepPurpleAccent.withValues(alpha: 0.6),
+      );
+
+      final textPainter = TextPainter(
+        text: TextSpan(
+          text: '${c.count}',
+          style: TextStyle(color: Colors.white, fontSize: 12 / scale),
+        ),
+        textDirection: TextDirection.ltr,
+      )..layout();
+
+      textPainter.paint(
+        canvas,
+        center - Offset(textPainter.width / 2, textPainter.height / 2),
+      );
+    }
+  }
+
   Color _parseColor(String hex) {
     return Color(int.parse(hex.replaceFirst('#', '0xFF')));
   }
@@ -117,6 +156,8 @@ class CanvasPainter extends CustomPainter {
         oldDelegate.quadTree != quadTree ||
         oldDelegate.draggingId != draggingId ||
         oldDelegate.draggingPosition != draggingPosition ||
-        oldDelegate.dragTrail != dragTrail;
+        oldDelegate.dragTrail != dragTrail ||
+        oldDelegate.clusters != clusters ||
+        oldDelegate.isClusterMode != isClusterMode;
   }
 }

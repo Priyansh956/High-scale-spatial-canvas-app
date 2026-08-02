@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:http/http.dart' as http;
+import 'package:spatial_canvas_app/models/cluster_point.dart';
 import '../models/spatial_object.dart';
 
 class ApiService {
@@ -60,5 +61,23 @@ class ApiService {
 
     final data = jsonDecode(response.body);
     return SpatialObject.fromJson(data['object']);
+  }
+
+  static Future<List<ClusterPoint>> fetchClusters({
+    required double minX,
+    required double minY,
+    required double maxX,
+    required double maxY,
+    required double gridSize,
+  }) async {
+    final uri = Uri.parse(
+      '$baseUrl/api/objects/clusters?minX=$minX&minY=$minY&maxX=$maxX&maxY=$maxY&gridSize=$gridSize',
+    );
+    final response = await http.get(uri).timeout(const Duration(seconds: 60));
+    if (response.statusCode != 200) {
+      throw Exception('Failed to fetch clusters: ${response.statusCode}');
+    }
+    final data = jsonDecode(response.body);
+    return (data['clusters'] as List).map((j) => ClusterPoint.fromJson(j)).toList();
   }
 }
