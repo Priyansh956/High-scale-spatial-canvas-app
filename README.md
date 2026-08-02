@@ -52,6 +52,11 @@ visuallai/
 ├── README.md
 └── ARCHITECTURE.md
 ```
+## Architecture
+
+See [`ARCHITECTURE.md`](./ARCHITECTURE.md) for the design write-up covering
+backend filtering strategy, frontend rendering/network strategy, and
+trade-offs encountered during the build.
 
 ## Prerequisites
 
